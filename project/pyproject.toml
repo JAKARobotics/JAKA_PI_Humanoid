@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "wheel", "toml"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaka_rl_lab"
+version = "0.0.1"
+description = "Reinforcement Learning Lab for JAKA Robots."
+dependencies = [
+    "argcomplete",
+]
+requires-python = ">=3.10"
+license = { text = "Apache 2.0" }
+authors = [
+    { name = "JAKA Robotics" }
+]
+maintainers = [
+    { name = "JAKA Robotics" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux"
+]
+dynamic = []

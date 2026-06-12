@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: jaka_rl_lab
+Version: 0.0.1
+Summary: Reinforcement Learning Lab for JAKA Robots.
+Home-page: 
+Author: JAKA Robotics
+Maintainer: JAKA Robotics
+License: Apache 2.0
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: POSIX :: Linux
+Requires-Python: >=3.10
+Requires-Dist: argcomplete
+Dynamic: requires-python
