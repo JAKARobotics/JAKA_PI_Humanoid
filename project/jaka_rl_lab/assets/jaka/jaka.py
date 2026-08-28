@@ -17,8 +17,8 @@ from isaaclab.assets.articulation import ArticulationCfg
 # Conveniences to other module directories via relative paths
 from jaka_rl_lab.assets import ISAAC_ASSET_DIR
 
-# Khan_mini configuration
-Khan_mini_JOINT_NAMES_DEPLOY=[
+# JAKA_PI configuration
+JAKA_PI_JOINT_NAMES_DEPLOY=[
     "Left_hip_pitch_joint", #left leg (6 dof)
     "Left_hip_roll_joint",
     "Left_hip_yaw_joint",
@@ -48,16 +48,16 @@ Khan_mini_JOINT_NAMES_DEPLOY=[
     "Neck_pitch_joint",
 ]
 
-Khan_mini_END_LINK_NAMES=[
+JAKA_PI_END_LINK_NAMES=[
     "Left_wrist_yaw_Link",
     "Right_wrist_yaw__Link",
     "Left_ankle_roll_Link",
     "Right_ankle_roll_Link",
 ]
 
-Khan_mini_CFG = ArticulationCfg(
+JAKA_PI_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_ASSET_DIR}/jaka/Khan_mini_simplified/Khan_mini_simplified.usd",
+        usd_path=f"{ISAAC_ASSET_DIR}/jaka/jaka_pi_simplified/jaka_pi_simplified.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -149,12 +149,12 @@ Khan_mini_CFG = ArticulationCfg(
             effort_limit_sim=96.0,
             velocity_limit_sim=14.6,          
             stiffness={
-                ".*_ankle_pitch_joint": 100.0,
-                ".*_ankle_roll_joint": 50.0,
+                ".*_ankle_pitch_joint": 80.0, #100.0,
+                ".*_ankle_roll_joint": 20.0, #50.0,
             },
             damping={
-                ".*_ankle_pitch_joint": 2.0,
-                ".*_ankle_roll_joint": 0.5,
+                ".*_ankle_pitch_joint": 1.6,
+                ".*_ankle_roll_joint": 0.4,
             },
             armature=0.016,
         ),
@@ -177,16 +177,16 @@ Khan_mini_CFG = ArticulationCfg(
             stiffness={
                 ".*_shoulder_pitch_joint": 102.0,
                 ".*_shoulder_roll_joint": 102.0,
-                ".*_shoulder_yaw_joint": 40.8,
-                ".*_elbow_joint": 40.8,
-                ".*_wrist_.*_joint": 6.7,
+                ".*_shoulder_yaw_joint": 20.4, #40.8,
+                ".*_elbow_joint": 20.4, #40.8,
+                ".*_wrist_.*_joint": 3.4, #6.7,
             },
             damping={
                 ".*_shoulder_pitch_joint": 10.2,
                 ".*_shoulder_roll_joint": 10.2,
-                ".*_shoulder_yaw_joint": 4.0,
-                ".*_elbow_joint": 4.0,
-                ".*_wrist_.*_joint": 0.67,
+                ".*_shoulder_yaw_joint": 2.0, #4.0,
+                ".*_elbow_joint": 2.0, #4.0,
+                ".*_wrist_.*_joint": 0.34, #0.67,
             },
             armature={
                 ".*_shoulder_pitch_joint": 0.016,
@@ -210,13 +210,13 @@ Khan_mini_CFG = ArticulationCfg(
             },          
             stiffness={
                 "waist_yaw_joint": 187.0,
-                "Neck_yaw_joint": 6.7,
-                "Neck_pitch_joint": 6.7,
+                "Neck_yaw_joint": 3.4, #6.7,
+                "Neck_pitch_joint": 3.4, #6.7,
             },
             damping={
                 "waist_yaw_joint": 18.7,
-                "Neck_yaw_joint": 0.67,
-                "Neck_pitch_joint": 0.67,
+                "Neck_yaw_joint": 0.34, #0.67,
+                "Neck_pitch_joint": 0.34, #0.67,
             },
             armature={
                 "waist_yaw_joint": 0.03,

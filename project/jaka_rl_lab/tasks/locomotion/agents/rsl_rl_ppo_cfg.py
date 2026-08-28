@@ -6,8 +6,8 @@
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlSymmetryCfg
 # from jaka_rl_lab.tasks.locomotion.mdp import MyRLEnv
-from jaka_rl_lab.tasks.locomotion.envs.Khan_mini_27dof import ISAAC_K1L_MINI_LOCO_DIR
-from jaka_rl_lab.tasks.locomotion.envs.Khan_mini_27dof.velocity_env_cfg import mini_data_augmentation_callback
+from jaka_rl_lab.tasks.locomotion.envs.Khan_mini_27dof import ISAAC_JAKA_PI_LOCO_DIR
+from jaka_rl_lab.tasks.locomotion.envs.Khan_mini_27dof.velocity_env_cfg import sym_augmentation_callback
 # import torch
 import glob
 
@@ -16,7 +16,7 @@ import glob
 class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 50000
-    save_interval = 100
+    save_interval = 500
     experiment_name = ""  # same as task name
     empirical_normalization = False
     clip_actions = 10.0
@@ -44,16 +44,16 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
-class MiniSymPPORunnerCfg(BasePPORunnerCfg):
+class SymPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
         self.algorithm.symmetry_cfg=RslRlSymmetryCfg()
         self.algorithm.symmetry_cfg.use_data_augmentation=True
         self.algorithm.symmetry_cfg.use_mirror_loss=True
         self.algorithm.symmetry_cfg.mirror_loss_coeff=0.5  # 1.0
-        self.algorithm.symmetry_cfg.data_augmentation_func=mini_data_augmentation_callback
+        self.algorithm.symmetry_cfg.data_augmentation_func=sym_augmentation_callback
 
 @configclass
-class MiniSymAmpPPORunnerCfg(BasePPORunnerCfg):
+class SymAmpPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
         self.class_name="AmpOnPolicyRunner"
         self.algorithm.class_name="AMPPPO"
@@ -62,11 +62,10 @@ class MiniSymAmpPPORunnerCfg(BasePPORunnerCfg):
         self.algorithm.symmetry_cfg.use_data_augmentation=True
         self.algorithm.symmetry_cfg.use_mirror_loss=True
         self.algorithm.symmetry_cfg.mirror_loss_coeff=2.0
-        self.algorithm.symmetry_cfg.data_augmentation_func=mini_data_augmentation_callback
+        self.algorithm.symmetry_cfg.data_augmentation_func=sym_augmentation_callback
 
         self.amp_reward_coef=0.15
-        self.amp_motion_files=[f"{ISAAC_K1L_MINI_LOCO_DIR}/data.txt"]
-        # self.amp_motion_files = glob.glob(f"{ISAAC_K1L_MINI_LOCO_DIR}/amp_data/*.txt")
+        self.amp_motion_files=[f"{ISAAC_JAKA_PI_LOCO_DIR}/data.txt"]
         self.amp_num_preload_transitions=200000
         self.amp_task_reward_lerp=0.9
         self.amp_discr_hidden_dims=[1024,512,256]

@@ -11,7 +11,7 @@ import os
 DEFAULT_MIMIC_CONFIG_PATH = Path(
     os.environ.get(
         "K1L_MIMIC_CONFIG",
-        Path(__file__).parent.parent / "Khan_mini_config.yaml"
+        Path(__file__).parent.parent / "Jaka_Pi_config.yaml"
     )
 )
 

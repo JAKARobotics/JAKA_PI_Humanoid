@@ -17,14 +17,14 @@ from isaaclab.terrains import TerrainImporterCfg
 import isaaclab.terrains as terrain_gen
 # from isaaclab.terrains.terrain_generator_cfg import TerrainGeneratorCfg
 
-from jaka_rl_lab.assets.jaka import Khan_mini_CFG, Khan_mini_JOINT_NAMES_DEPLOY
+from jaka_rl_lab.assets.jaka import JAKA_PI_CFG, JAKA_PI_JOINT_NAMES_DEPLOY
 
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 import jaka_rl_lab.tasks.mimic.mdp as mdp
 
 
-JOINT_DATA_ASSET_CFG=SceneEntityCfg(name="robot",joint_names=Khan_mini_JOINT_NAMES_DEPLOY,preserve_order=True)
+JOINT_DATA_ASSET_CFG=SceneEntityCfg(name="robot",joint_names=JAKA_PI_JOINT_NAMES_DEPLOY,preserve_order=True)
 
 VELOCITY_RANGE = {
     "x": (-0.5, 0.5),
@@ -80,7 +80,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ),
     )
     # robots
-    robot: ArticulationCfg = Khan_mini_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = JAKA_PI_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
     # lights
     light = AssetBaseCfg(
@@ -94,6 +94,11 @@ class RobotSceneCfg(InteractiveSceneCfg):
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True, force_threshold=10.0, debug_vis=True
     )
+    ankle_roll_pair_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/Left_ankle_roll_Link",
+        history_length=3,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Robot/Right_ankle_roll_Link"],
+    )
 
 
 @configclass
@@ -103,7 +108,7 @@ class CommandsCfg:
     motion = mdp.MotionCommandCfg(
         asset_name="robot",
         motion_file=f"{os.path.dirname(__file__)}/moxingwu_edit.npz",
-        anchor_body_name="waist_yaw_Link",
+        anchor_body_name="base_link",
         resampling_time_range=(1.0e9, 1.0e9),
         debug_vis=True,
         pose_range={
@@ -133,14 +138,17 @@ class CommandsCfg:
             "Right_wrist_yaw__Link",
             "Neck_pitch_Link"
         ],
-        joint_names=Khan_mini_JOINT_NAMES_DEPLOY,
+        joint_names=JAKA_PI_JOINT_NAMES_DEPLOY,
     )
 
 @configclass
 class ActionsCfg:
     """Action specifications for the MDP."""
 
-    JointPositionAction = mdp.JointActionMixedCfg(asset_name="robot", scale=0.5, joint_names=Khan_mini_JOINT_NAMES_DEPLOY)
+    JointPositionAction = mdp.JointActionMixedCfg(
+        asset_name="robot", scale=0.5, 
+        joint_names=JAKA_PI_JOINT_NAMES_DEPLOY,
+        action_delay_range=(0,4))
 
 @configclass
 class ObservationsCfg:
@@ -155,9 +163,10 @@ class ObservationsCfg:
         motion_anchor_ori_b = ObsTerm(
             func=mdp.motion_anchor_ori_b, params={"command_name": "motion"}, noise=Unoise(n_min=-0.05, n_max=0.05)
         )
-        base_ang_vel = ObsTerm(func=mdp.waist_ang_vel, scale=0.2, noise=Unoise(n_min=-0.2, n_max=0.2))
-        joint_pos_rel = ObsTerm(func=mdp.delay_joint_pos_rel, noise=Unoise(n_min=-0.02, n_max=0.02), params={"asset_cfg": JOINT_DATA_ASSET_CFG})
-        joint_vel_rel = ObsTerm(func=mdp.delay_joint_vel, scale=0.05, noise=Unoise(n_min=-0.5, n_max=0.5), params={"asset_cfg": JOINT_DATA_ASSET_CFG})
+        base_ang_vel = ObsTerm(func=mdp.delayed_root_omega_b, scale=0.2, noise=Unoise(n_min=-0.2, n_max=0.2))
+        projected_gravity = ObsTerm(func=mdp.delayed_projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
+        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.02, n_max=0.02), params={"asset_cfg": JOINT_DATA_ASSET_CFG})
+        joint_vel_rel = ObsTerm(func=mdp.joint_vel, scale=0.05, noise=Unoise(n_min=-0.5, n_max=0.5), params={"asset_cfg": JOINT_DATA_ASSET_CFG})
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -171,8 +180,9 @@ class ObservationsCfg:
         motion_anchor_ori_b = ObsTerm(func=mdp.motion_anchor_ori_b, params={"command_name": "motion"})
         body_pos = ObsTerm(func=mdp.robot_body_pos_b, params={"command_name": "motion"})
         body_ori = ObsTerm(func=mdp.robot_body_ori_b, params={"command_name": "motion"})
-        base_lin_vel = ObsTerm(func=mdp.waist_lin_vel)
-        base_ang_vel = ObsTerm(func=mdp.waist_ang_vel)
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        projected_gravity = ObsTerm(func=mdp.projected_gravity)
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
         actions = ObsTerm(func=mdp.last_action)
@@ -225,20 +235,10 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot",body_names="waist_yaw_Link"),
-            "mass_distribution_params": (-7,7),
-            "operation": "add",
+            "mass_distribution_params": (0.5,1.5),
+            "operation": "scale",
         },
     )
-
-    # hand_mass = EventTerm(
-    #     func=mdp.randomize_rigid_body_mass,
-    #     mode="startup",
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot",body_names=["Left_wrist_yaw_Link","Right_wrist_yaw__Link"]),
-    #         "mass_distribution_params": (0,5),
-    #         "operation": "add",
-    #     },
-    # )
 
     joint_armature = EventTerm(
         func=mdp.randomize_joint_parameters,
@@ -251,24 +251,22 @@ class EventCfg:
         },
     )
 
+    joint_pd_gains = EventTerm(
+        func=mdp.randomize_pd_gains_same_scale,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "scale_range": (0.8, 1.2),
+            "distribution": "log_uniform",
+        },
+    )
+
     # interval
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(1.0, 3.0),
+        interval_range_s=(6.0, 12.0),
         params={"velocity_range": VELOCITY_RANGE},
-    )
-
-    joint_pd_gains = EventTerm(
-        func=mdp.randomize_actuator_gains,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip.*",".*knee.*"]),
-            "stiffness_distribution_params": (0.8, 1.2),
-            "damping_distribution_params": (0.8, 1.2),
-            "operation": "scale",
-            "distribution": "log_uniform",
-        },
     )
 
 
@@ -318,29 +316,24 @@ class RewardsCfg:
         params={"command_name": "motion", "std": 3.14},
     )
 
-    # motion_joint_pos = RewTerm(
-    #     func=mdp.motion_joint_pos_error_exp,
-    #     weight=0.5,
-    #     params={"command_name": "motion", "std": 1},
-    # )
-
-    # motion_joint_vel = RewTerm(
-    #     func=mdp.motion_joint_vel_error_exp,
-    #     weight=0.5,
-    #     params={"command_name": "motion", "std": 10},
-    # )
-
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,
         weight=-0.1,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
-                body_names=[
-                    r"^(?!Left_ankle_roll_Link$)(?!Right_ankle_roll_Link$)(?!Left_wrist_roll_Link$)(?!Right_wrist_roll_Link$).+$"
-                ],
+                body_names=["(?!.*ankle_roll.*).*"],
             ),
             "threshold": 1.0,
+        },
+    )
+
+    undesired_ankle_roll_pair_contact = RewTerm(
+        func=mdp.undesired_contact_pair,
+        weight=-0.5,
+        params={
+            "threshold": 1,
+            "sensor_cfg": SceneEntityCfg("ankle_roll_pair_contact"),
         },
     )
 
@@ -373,7 +366,7 @@ class TerminationsCfg:
     )
 
 @configclass
-class K1LMiniMimicEnvCfg(ManagerBasedRLEnvCfg):
+class JakaPiMimicEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Scene settings
@@ -388,8 +381,10 @@ class K1LMiniMimicEnvCfg(ManagerBasedRLEnvCfg):
     events: EventCfg = EventCfg()
     curriculum = None
 
-    fbdata_delay=True
-    joint_names=Khan_mini_JOINT_NAMES_DEPLOY
+    imu_delay=True
+    omega_max_delay=4
+    quat_max_extra_delay=4
+    joint_names=JAKA_PI_JOINT_NAMES_DEPLOY
 
     def __post_init__(self):
         """Post initialization."""
@@ -398,12 +393,14 @@ class K1LMiniMimicEnvCfg(ManagerBasedRLEnvCfg):
         self.episode_length_s = 10.0
         # simulation settings
         self.sim.dt = 0.005
+        self.scene.contact_forces.update_period = self.sim.dt
+        self.scene.ankle_roll_pair_contact.update_period = self.sim.dt
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
 
 
-class K1LMiniMimicPlayEnvCfg(K1LMiniMimicEnvCfg):
+class JakaPiMimicPlayEnvCfg(JakaPiMimicEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 1
@@ -411,4 +408,3 @@ class K1LMiniMimicPlayEnvCfg(K1LMiniMimicEnvCfg):
         self.scene.terrain.terrain_type="plane"
         self.scene.terrain.terrain_generator=None
         self.events.push_robot=None
-        

@@ -172,8 +172,6 @@ class MyRLEnv(ManagerBasedRLEnv):
     end_link_ids: list[int] | slice=slice(None)
     root_quat_buffer: DelayBuffer = None
     root_omega_buffer: DelayBuffer = None
-    joint_pos_buffer: DelayBuffer = None
-    joint_vel_buffer: DelayBuffer = None
     hand_offset:torch.Tensor = None
     def __init__(self, cfg, render_mode = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
@@ -183,7 +181,7 @@ class MyRLEnv(ManagerBasedRLEnv):
             self.joint_ids,_=self.scene["robot"].find_joints(self.cfg.joint_names,preserve_order=True)
         if self.cfg.end_link_names is not None:
             self.end_link_ids,_=self.scene["robot"].find_bodies(self.cfg.end_link_names,preserve_order=True)
-        if self.cfg.fbdata_delay:
+        if self.cfg.imu_delay:
             # time_lags = torch.randint(
             #     low=0,
             #     high=10,
@@ -191,21 +189,15 @@ class MyRLEnv(ManagerBasedRLEnv):
             #     dtype=torch.int,
             #     device=self.device,
             # )
-            time_lags = torch.zeros(self.num_envs,dtype=torch.int,device=self.device)
+            self.omega_time_lags = torch.zeros(self.num_envs,dtype=torch.int,device=self.device)
+            self.quat_time_extra_lags = torch.zeros(self.num_envs,dtype=torch.int,device=self.device)
             self.root_quat_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.root_quat_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
+            self.root_quat_buffer.set_time_lag(self.omega_time_lags+self.quat_time_extra_lags, torch.arange(self.num_envs, device=self.device))
             self.root_omega_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.root_omega_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
-            self.joint_pos_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.joint_pos_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
-            self.joint_vel_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.joint_vel_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
+            self.root_omega_buffer.set_time_lag(self.omega_time_lags, torch.arange(self.num_envs, device=self.device))
             for _ in range(10):
                 self.root_quat_buffer.compute(self.scene["robot"].data.root_quat_w.clone())
                 self.root_omega_buffer.compute(self.scene["robot"].data.root_ang_vel_b.clone())
-                joint_pos=self.scene["robot"].data.joint_pos[:,self.joint_ids]
-                self.joint_pos_buffer.compute(joint_pos.clone())
-                self.joint_vel_buffer.compute(self.scene["robot"].data.joint_vel[:,self.joint_ids].clone())
             
 
     def load_managers(self):
@@ -263,9 +255,13 @@ class MyRLEnv(ManagerBasedRLEnv):
             if self.root_quat_buffer is not None:
                 self.root_quat_buffer.compute(self.scene["robot"].data.root_quat_w.clone())
                 self.root_omega_buffer.compute(self.scene["robot"].data.root_ang_vel_b.clone())
-                joint_pos=self.scene["robot"].data.joint_pos[:,self.joint_ids]-self.scene["robot"].data.default_joint_pos[:,self.joint_ids]
-                self.joint_pos_buffer.compute(joint_pos.clone())
-                self.joint_vel_buffer.compute(self.scene["robot"].data.joint_vel[:,self.joint_ids].clone())
+
+        if self.cfg.imu_delay:
+            self.omega_time_lags.random_(0,self.cfg.omega_max_delay)
+            self.root_omega_buffer.set_time_lag(self.omega_time_lags.clip(0,10), torch.arange(self.num_envs, device=self.device))
+            self.quat_time_extra_lags.random_(0,self.cfg.quat_max_extra_delay)
+            self.root_quat_buffer.set_time_lag((self.omega_time_lags+self.quat_time_extra_lags).clip(0,10), torch.arange(self.num_envs, device=self.device))
+            
 
         # post-step:
         # -- update env counters (used for curriculum generation)
@@ -293,8 +289,6 @@ class MyRLEnv(ManagerBasedRLEnv):
             if self.root_quat_buffer is not None:
                 self.root_quat_buffer.reset(reset_env_ids)
                 self.root_omega_buffer.reset(reset_env_ids)
-                self.joint_pos_buffer.reset(reset_env_ids)
-                self.joint_vel_buffer.reset(reset_env_ids)
             # update articulation kinematics
             self.scene.write_data_to_sim()
             self.sim.forward()
@@ -303,9 +297,6 @@ class MyRLEnv(ManagerBasedRLEnv):
                 for _ in range(10):
                     self.root_quat_buffer.compute(self.scene["robot"].data.root_quat_w.clone())
                     self.root_omega_buffer.compute(self.scene["robot"].data.root_ang_vel_b.clone())
-                    joint_pos=self.scene["robot"].data.joint_pos[:,self.joint_ids]-self.scene["robot"].data.default_joint_pos[:,self.joint_ids]
-                    self.joint_pos_buffer.compute(joint_pos.clone())
-                    self.joint_vel_buffer.compute(self.scene["robot"].data.joint_vel[:,self.joint_ids].clone())
 
             # if sensors are added to the scene, make sure we render to reflect changes in reset
             if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:

@@ -19,7 +19,7 @@ sys.path.pop(0)
 
 tasks = []
 for task_spec in gym.registry.values():
-    if ("K1L" in task_spec.id) and "Isaac" not in task_spec.id:
+    if ("Jaka" in task_spec.id) and "Isaac" not in task_spec.id:
         tasks.append(task_spec.id)
 
 import argparse

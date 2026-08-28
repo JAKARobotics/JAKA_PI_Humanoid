@@ -426,12 +426,7 @@ class FSM_Mimic:
         # ref_yaw = self._yaw_quaternion(self.motion_.root_quaternion())
         # robot_yaw = self._yaw_quaternion(robot_root_quat_w)
         # init_rot = robot_yaw @ ref_yaw.T
-        ref_root_quat=self.motion.root_quaternion()
-        dof_pos=self.motion_.joint_pos()
-        waist_quat_rel=np.array([np.cos(dof_pos[24]/2),0,0,np.sin(dof_pos[24]/2)],dtype=np.float32)
-        ref_quat=self._quaternion_multiply(ref_root_quat,waist_quat_rel)
-        # ref_yaw_q = self._yaw_quaternion(self.motion_.root_quaternion())      # [w,x,y,z]
-        ref_yaw_q = self._yaw_quaternion(ref_quat)      # [w,x,y,z]
+        ref_yaw_q = self._yaw_quaternion(self.motion_.root_quaternion())      # [w,x,y,z]
         robot_yaw_q = self._yaw_quaternion(robot_root_quat_w)                 # [w,x,y,z]
         ref_yaw = self._quat_wxyz_to_rotmat(ref_yaw_q)
         robot_yaw = self._quat_wxyz_to_rotmat(robot_yaw_q)
@@ -650,9 +645,6 @@ class FSM_Mimic:
         # 计算锚点四元数
         # ref_quat_w = self._anchor_quat_w(self.motion_ )
         root_quat = self.motion_.root_quaternion()
-        dof_pos = self.motion_.joint_pos()
-        waist_quat_rel=np.array([np.cos(dof_pos[24]/2),0,0,np.sin(dof_pos[24]/2)],dtype=np.float32)
-        root_quat=self._quaternion_multiply(root_quat,waist_quat_rel)
         # init_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
         # 计算旋转
@@ -717,6 +709,17 @@ class FSM_Mimic:
         # 获取motion相关的观测项
         command = self.get_motion_command(joint_ids_map)  # 50 (25 pos + 25 vel)
         anchor_ori = self.get_motion_anchor_ori_b(real_quat_w=real_quat_w)  # 6
+
+        qw = real_quat_w[0]
+        qx = real_quat_w[1]
+        qy = real_quat_w[2]
+        qz = real_quat_w[3]
+
+        gravity_orientation = np.zeros(3)
+
+        gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
+        gravity_orientation[1] = -2 * (qz * qy + qw * qx)
+        gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
         
         if command is None or anchor_ori is None:
             return None
@@ -734,6 +737,7 @@ class FSM_Mimic:
             command,           # 50 (25 pos + 25 vel)
             anchor_ori,         # 6
             base_ang_vel,      # 3
+            gravity_orientation, #3
             joint_pos_rel,     # 25
             joint_vel_rel,     # 25
             last_action,       # 25

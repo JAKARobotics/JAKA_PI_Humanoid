@@ -131,3 +131,15 @@ def feet_contact_time(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, thresh
     last_contact_time = contact_sensor.data.last_contact_time[:, sensor_cfg.body_ids]
     reward = torch.sum((last_contact_time < threshold) * first_air, dim=-1)
     return reward
+
+def undesired_contact_pair(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Penalize contacts reported by a sensor configured for one specific body pair."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    pair_forces = contact_sensor.data.force_matrix_w_history
+    if pair_forces is None:
+        raise RuntimeError(
+            f"Contact sensor '{sensor_cfg.name}' must define filter_prim_paths_expr to report a contact pair."
+        )
+    is_contact = torch.max(torch.norm(pair_forces, dim=-1), dim=1)[0] > threshold
+    return torch.sum(is_contact, dim=(1, 2))
+

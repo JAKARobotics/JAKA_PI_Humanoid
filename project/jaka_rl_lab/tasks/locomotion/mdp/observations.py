@@ -5,6 +5,9 @@ from typing import TYPE_CHECKING
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.utils.math import quat_apply_inverse
+
+import isaaclab.utils.math as math_utils
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.sensors.contact_sensor import ContactSensor
@@ -27,33 +30,37 @@ def feet_contact(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg=SceneEntityC
     feet_state=torch.max(torch.norm(net_contact_forces[:, :,sensor_cfg.body_ids], dim=-1), dim=1)[0] > threshold
     return feet_state
 
-def delay_root_quat_w(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+def feet_force(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg=SceneEntityCfg("contact_forces"))->torch.Tensor:
+    asset: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces=asset.data.net_forces_w_history
+    feet_force=torch.max(torch.norm(net_contact_forces[:, :,sensor_cfg.body_ids], dim=-1), dim=1)[0]
+    return feet_force
+
+def delayed_root_quat_w(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     if env.root_quat_buffer is not None:
         return env.root_quat_buffer._circular_buffer[ env.root_quat_buffer._time_lags].clone()
     else:
         asset: RigidObject = env.scene[asset_cfg.name]
         return asset.data.root_quat_w
 
-def delay_root_omega_b(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+def delayed_root_omega_b(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     if env.root_omega_buffer is not None:
         return env.root_omega_buffer._circular_buffer[ env.root_omega_buffer._time_lags].clone()
     else:
         asset: RigidObject = env.scene[asset_cfg.name]
         return asset.data.root_ang_vel_b
-
-def delay_joint_pos(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    if env.joint_pos_rel_buffer is not None:
-        return env.joint_pos_buffer._circular_buffer[env.joint_pos_rel_buffer._time_lags].clone()
+    
+def delayed_projected_gravity(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Gravity projection on the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    if env.root_quat_buffer is not None:
+        asset: RigidObject = env.scene[asset_cfg.name]
+        delayed_root_quat_w = env.root_quat_buffer._circular_buffer[env.root_quat_buffer._time_lags].clone()
+        return  math_utils.quat_apply_inverse(delayed_root_quat_w, asset.data.GRAVITY_VEC_W)
     else:
-        asset: Articulation = env.scene[asset_cfg.name]
-        return asset.data.joint_pos[:, asset_cfg.joint_ids]
+        asset: RigidObject = env.scene[asset_cfg.name]
+        return asset.data.projected_gravity_b
 
-def delay_joint_vel(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    if env.joint_vel_rel_buffer is not None:
-        return env.joint_vel_buffer._circular_buffer[env.joint_vel_rel_buffer._time_lags].clone()
-    else:
-        asset: Articulation = env.scene[asset_cfg.name]
-        return asset.data.joint_vel[:, asset_cfg.joint_ids]
     
 def waist_ang_vel(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     asset: Articulation = env.scene[asset_cfg.name]

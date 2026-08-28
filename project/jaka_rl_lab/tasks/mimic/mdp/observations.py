@@ -99,56 +99,32 @@ def motion_root_ori_b(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
     mat = matrix_from_quat(ori)
     return mat[..., :2].reshape(mat.shape[0], -1)
 
-def delay_root_quat_w(env: ManagerBasedEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    if env.root_quat_buffer is not None:
-        return env.root_quat_buffer._circular_buffer[ env.root_quat_buffer._time_lags].clone()
-    else:
-        asset: RigidObject = env.scene[asset_cfg.name]
-        return asset.data.root_quat_w
-
-def delay_root_omega_b(env: ManagerBasedEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+def delayed_root_omega_b(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     if env.root_omega_buffer is not None:
         return env.root_omega_buffer._circular_buffer[ env.root_omega_buffer._time_lags].clone()
     else:
         asset: RigidObject = env.scene[asset_cfg.name]
         return asset.data.root_ang_vel_b
-
-def delay_joint_pos_rel(env: ManagerBasedEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    if env.joint_pos_rel_buffer is not None:
-        return env.joint_pos_rel_buffer._circular_buffer[env.joint_pos_rel_buffer._time_lags].clone()
-    else:
-        asset: Articulation = env.scene[asset_cfg.name]
-        return asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
-
-def delay_joint_vel(env: ManagerBasedEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    if env.joint_vel_rel_buffer is not None:
-        return env.joint_vel_rel_buffer._circular_buffer[env.joint_vel_rel_buffer._time_lags].clone()
-    else:
-        asset: Articulation = env.scene[asset_cfg.name]
-        return asset.data.joint_vel[:, asset_cfg.joint_ids]
     
-def waist_ang_vel(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    asset: Articulation = env.scene[asset_cfg.name]
+def delayed_projected_gravity(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Gravity projection on the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    if env.root_quat_buffer is not None:
+        asset: RigidObject = env.scene[asset_cfg.name]
+        delayed_root_quat_w = env.root_quat_buffer._circular_buffer[env.root_quat_buffer._time_lags].clone()
+        return  math_utils.quat_apply_inverse(delayed_root_quat_w, asset.data.GRAVITY_VEC_W)
+    else:
+        asset: RigidObject = env.scene[asset_cfg.name]
+        return asset.data.projected_gravity_b
 
+    
+def _get_base_body_id(env: ManagerBasedRLEnv, asset: Articulation) -> int:
+    if not hasattr(env, "base_id"):
+        if hasattr(env, "waist_id"):
+            env.base_id = env.waist_id
+        else:
+            body_ids, _ = asset.find_bodies("^base_link$")
+            env.base_id = body_ids[0]
     if not hasattr(env, "waist_id"):
-        body_ids, _ = asset.find_bodies("waist_yaw_Link")
-        env.waist_id = body_ids[0]
-
-    ang_vel_w = asset.data.body_ang_vel_w[:, env.waist_id, :]
-    quat_w = asset.data.body_quat_w[:, env.waist_id, :]
-    ang_vel_b = quat_apply_inverse(quat_w, ang_vel_w)
-
-    return ang_vel_b
-
-def waist_lin_vel(env: ManagerBasedRLEnv,asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
-    asset: Articulation = env.scene[asset_cfg.name]
-
-    if not hasattr(env, "waist_id"):
-        body_ids, _ = asset.find_bodies("waist_yaw_Link")
-        env.waist_id = body_ids[0]
-
-    lin_vel_w = asset.data.body_lin_vel_w[:, env.waist_id, :]
-    quat_w = asset.data.body_quat_w[:, env.waist_id, :]
-    lin_vel_b = quat_apply_inverse(quat_w, lin_vel_w)
-
-    return lin_vel_b
+        env.waist_id = env.base_id
+    return env.base_id

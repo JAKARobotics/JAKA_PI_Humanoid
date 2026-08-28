@@ -10,6 +10,7 @@ except ImportError:
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
+from isaaclab.utils.math import quat_apply_inverse, yaw_quat
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -17,6 +18,22 @@ if TYPE_CHECKING:
 """
 Joint penalties.
 """
+
+
+def joint_effort_limits(
+    env: ManagerBasedRLEnv,
+    soft_factor: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize computed joint efforts above a fraction of the hard effort limits."""
+    if not 0.0 < soft_factor <= 1.0:
+        raise ValueError(f"soft_factor must be in (0, 1], received {soft_factor}.")
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    computed_effort = torch.abs(asset.data.computed_torque[:, asset_cfg.joint_ids])
+    soft_effort_limits = asset.data.joint_effort_limits[:, asset_cfg.joint_ids] * soft_factor
+    effort_excess = torch.clamp(computed_effort - soft_effort_limits, min=0.0)
+    return torch.sum(effort_excess, dim=1)
 
 
 def energy(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -219,6 +236,18 @@ def fly(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEntityCfg) ->
     return torch.sum(is_contact, dim=-1) < 0.5
 
 
+def undesired_contact_pair(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Penalize contacts reported by a sensor configured for one specific body pair."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    pair_forces = contact_sensor.data.force_matrix_w_history
+    if pair_forces is None:
+        raise RuntimeError(
+            f"Contact sensor '{sensor_cfg.name}' must define filter_prim_paths_expr to report a contact pair."
+        )
+    is_contact = torch.max(torch.norm(pair_forces, dim=-1), dim=1)[0] > threshold
+    return torch.sum(is_contact, dim=(1, 2))
+
+
 def body_force(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, sensor_cfg: SceneEntityCfg, threshold: float = 500, max_reward: float = 400
 ) -> torch.Tensor:
@@ -255,3 +284,29 @@ def joint_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joint
 
 def penalize_action(env: ManagerBasedRLEnv,joint_ids: list[int]):
     return torch.sum(torch.abs(env.action_manager.action[:,joint_ids]),dim=1)
+
+
+def track_lin_vel_xy_exp_adaptive_std(
+    env, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Reward tracking of linear velocity commands (xy axes) in the gravity aligned robot frame using exponential kernel."""
+    # extract the used quantities (to enable type-hinting)
+    asset = env.scene[asset_cfg.name]
+    vel_yaw = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3])
+    lin_vel_cmd_norm=torch.norm(env.command_manager.get_command(command_name)[:,:2],dim=1).clip(0.5,1)
+    adaptive_std=lin_vel_cmd_norm*std
+    lin_vel_error = torch.sum(
+        torch.square(env.command_manager.get_command(command_name)[:, :2] - vel_yaw[:, :2]), dim=1
+    )
+    return torch.exp(-lin_vel_error / adaptive_std**2)
+
+def track_ang_vel_z_exp_adaptive_std(
+    env, command_name: str, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Reward tracking of angular velocity commands (yaw) in world frame using exponential kernel."""
+    # extract the used quantities (to enable type-hinting)
+    asset = env.scene[asset_cfg.name]
+    ang_vel_norm=torch.abs(env.command_manager.get_command(command_name)[:, 2]).clip(0.5,1)
+    adaptive_std=ang_vel_norm*std
+    ang_vel_error = torch.square(env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_w[:, 2])
+    return torch.exp(-ang_vel_error / adaptive_std**2)

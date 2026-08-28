@@ -61,7 +61,45 @@ class JointActionMixed(ActionTerm):
         self._offset = self._asset.data.default_joint_pos.clone()
 
         # parse clip
-        self._clip = self._asset.data.default_joint_pos_limits[:,self._joint_ids].clone()
+        self._clip = self._asset.data.default_joint_pos_limits[:, self._joint_ids].clone()
+
+        # ``process_actions`` is called at the environment rate, while
+        # ``apply_actions`` is called once per simulation step.  Keep the
+        # previously applied target so the new target can be reached linearly
+        # over all env_dt / sim_dt simulation sub-steps.
+        self._interpolation_steps = int(round(env.step_dt / env.physics_dt))
+        if self._interpolation_steps < 1:
+            raise ValueError(
+                "The environment step time must be greater than or equal to the physics step time. "
+                f"Received env_dt={env.step_dt} and sim_dt={env.physics_dt}."
+            )
+        self._interpolation_step = self._interpolation_steps
+        self._interpolation_start = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
+        self._interpolated_actions = self._interpolation_start.clone()
+        self._applied_actions = self._interpolation_start.clone()
+
+        # Resolve the random action delay. A maximum of ``None`` means one
+        # complete environment step. The extra history slot stores the current
+        # command, allowing delays from zero through the configured maximum.
+        min_delay, max_delay = self.cfg.action_delay_range
+        max_delay = self._interpolation_steps if max_delay is None else max_delay
+        if min_delay < 0 or max_delay < min_delay:
+            raise ValueError(
+                "action_delay_range must satisfy 0 <= min_delay <= max_delay. "
+                f"Received {self.cfg.action_delay_range}."
+            )
+        if max_delay > self._interpolation_steps:
+            raise ValueError(
+                "The maximum action delay cannot exceed env_dt / sim_dt. "
+                f"Received max_delay={max_delay}, but env_dt / sim_dt={self._interpolation_steps}."
+            )
+        self._min_delay = min_delay
+        self._max_delay = max_delay
+        self._action_delay_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._action_history = self._interpolation_start.unsqueeze(0).repeat(max_delay + 1, 1, 1)
+        self._history_write_index = 0
+        self._env_indices = torch.arange(self.num_envs, device=self.device)
+
 
     """
     Properties.
@@ -85,19 +123,50 @@ class JointActionMixed(ActionTerm):
     def process_actions(self, actions: torch.Tensor):
         # store the raw actions
         self._raw_actions[:] = actions
+        # Continue the undelayed command trajectory from the preceding
+        # simulation sub-step.
+        self._interpolation_start[:] = self._interpolated_actions
+        self._interpolation_step = 0
+        self._action_delay_steps.random_(self._min_delay, self._max_delay + 1)
         # apply the affine transformations
-        self._processed_actions = self._raw_actions * self._scale + self._offset[:,self._joint_ids]
+        self._processed_actions[:] = self._raw_actions * self._scale + self._offset[:, self._joint_ids]
         # clip actions
         # self._processed_actions = torch.clamp(
         #     self._processed_actions, min=self._clip[:, :, 0], max=self._clip[:, :, 1]
         # )
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        env_ids = slice(None) if env_ids is None else env_ids
         self._raw_actions[env_ids] = 0.0
+        current_joint_pos = self._asset.data.joint_pos[env_ids][:, self._joint_ids]
+        self._interpolation_start[env_ids] = current_joint_pos
+        self._interpolated_actions[env_ids] = current_joint_pos
+        self._applied_actions[env_ids] = current_joint_pos
+        self._action_delay_steps[env_ids] = 0
+        self._action_history[:, env_ids] = current_joint_pos.unsqueeze(0)
 
     def apply_actions(self):
-        # set position targets
-        self._asset.set_joint_position_target(self.processed_actions, joint_ids=self._joint_ids)
+        # Reach the processed action exactly on the final simulation sub-step.
+        if self._interpolation_step < self._interpolation_steps:
+            self._interpolation_step += 1
+            alpha = self._interpolation_step / self._interpolation_steps
+            torch.lerp(
+                self._interpolation_start,
+                self._processed_actions,
+                alpha,
+                out=self._interpolated_actions,
+            )
+        else:
+            self._interpolated_actions[:] = self._processed_actions
+
+        # Cache the current undelayed command, then select a different history
+        # slot for each environment according to its sampled sub-step delay.
+        self._action_history[self._history_write_index] = self._interpolated_actions
+        read_indices = (self._history_write_index - self._action_delay_steps) % len(self._action_history)
+        self._applied_actions[:] = self._action_history[read_indices, self._env_indices]
+        self._history_write_index = (self._history_write_index + 1) % len(self._action_history)
+
+        self._asset.set_joint_position_target(self._applied_actions, joint_ids=self._joint_ids)
 
     
 @configclass
@@ -114,5 +183,12 @@ class JointActionMixedCfg(ActionTermCfg):
     preserve_order: bool = True
     """Whether to preserve the order of the joint names in the action output. Defaults to False."""
     use_default_offset: bool = True
+    action_delay_range: tuple[int, int | None] = (0, 4)
+    """Inclusive random action delay range in simulation steps.
+
+    The delay is sampled independently for every environment at each control
+    step. A maximum of ``None`` uses ``env_dt / sim_dt``. Set this to ``(0, 0)``
+    to disable action delay.
+    """
 
     class_type: type[ActionTerm] = JointActionMixed

@@ -17,19 +17,165 @@ from isaaclab.envs.common import VecEnvStepReturn
 # from .manager_based_rl_env_cfg import ManagerBasedRLEnvCfg
 
 from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.utils.buffers import DelayBuffer
+from isaaclab.utils.buffers import CircularBuffer,DelayBuffer
+from isaaclab.managers.observation_manager import ObservationManager
+from isaaclab.utils import noise
+from isaaclab.utils.math import quat_apply,quat_conjugate
+
+class MyObservationManager(ObservationManager):
+    def __init__(self, cfg: object, env: ManagerBasedRLEnv):
+        # check that cfg is not None
+        if cfg is None:
+            raise ValueError("Observation manager configuration is None. Please provide a valid configuration.")
+
+        # call the base class constructor (this will parse the terms config)
+        super().__init__(cfg, env)
+
+    def compute_group(self, group_name, update_history = False)-> torch.Tensor | dict[str, torch.Tensor]:
+        """Computes the observations for a given group.
+
+        The observations for a given group are computed by calling the registered functions for each
+        term in the group. The functions are called in the order of the terms in the group. The functions
+        are expected to return a tensor with shape (num_envs, ...).
+
+        The following steps are performed for each observation term:
+
+        1. Compute observation term by calling the function
+        2. Apply custom modifiers in the order specified in :attr:`ObservationTermCfg.modifiers`
+        3. Apply corruption/noise model based on :attr:`ObservationTermCfg.noise`
+        4. Apply clipping based on :attr:`ObservationTermCfg.clip`
+        5. Apply scaling based on :attr:`ObservationTermCfg.scale`
+
+        We apply noise to the computed term first to maintain the integrity of how noise affects the data
+        as it truly exists in the real world. If the noise is applied after clipping or scaling, the noise
+        could be artificially constrained or amplified, which might misrepresent how noise naturally occurs
+        in the data.
+
+        Args:
+            group_name: The name of the group for which to compute the observations. Defaults to None,
+                in which case observations for all the groups are computed and returned.
+            update_history: The boolean indicator without return obs should be appended to observation group's history.
+                Default to False, in which case calling compute_group does not modify history. This input is no-ops
+                if the group's history_length == 0.
+
+        Returns:
+            Depending on the group's configuration, the tensors for individual observation terms are
+            concatenated along the last dimension into a single tensor. Otherwise, they are returned as
+            a dictionary with keys corresponding to the term's name.
+
+        Raises:
+            ValueError: If input ``group_name`` is not a valid group handled by the manager.
+        """
+        # check ig group name is valid
+        if group_name not in self._group_obs_term_names:
+            raise ValueError(
+                f"Unable to find the group '{group_name}' in the observation manager."
+                f" Available groups are: {list(self._group_obs_term_names.keys())}"
+            )
+        # iterate over all the terms in each group
+        group_term_names = self._group_obs_term_names[group_name]
+        # buffer to store obs per group
+        group_obs = dict.fromkeys(group_term_names, None)
+        # read attributes for each term
+        obs_terms = zip(group_term_names, self._group_obs_term_cfgs[group_name])
+
+        # evaluate terms: compute, add noise, clip, scale, custom modifiers
+        if (group_name=="policy" and self.cfg.policy.history_length is not None) or \
+           (group_name=="critic" and self.cfg.critic.history_length is not None):
+            for term_name, term_cfg in obs_terms:
+                # compute term's value
+                obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
+                if term_cfg.modifiers is not None:
+                    for modifier in term_cfg.modifiers:
+                        obs = modifier.func(obs, **modifier.params)
+                if isinstance(term_cfg.noise, noise.NoiseCfg):
+                    obs = term_cfg.noise.func(obs, term_cfg.noise)
+                elif isinstance(term_cfg.noise, noise.NoiseModelCfg) and term_cfg.noise.func is not None:
+                    obs = term_cfg.noise.func(obs)
+                if term_cfg.clip:
+                    obs = obs.clip_(min=term_cfg.clip[0], max=term_cfg.clip[1])
+                if term_cfg.scale is not None:
+                    obs = obs.mul_(term_cfg.scale)
+                # Update the history buffer if observation term has history enabled
+                if term_cfg.history_length > 0:
+                    circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]
+                    if update_history:
+                        circular_buffer.append(obs)
+                    elif circular_buffer._buffer is None:
+                        # because circular buffer only exits after the simulation steps,
+                        # this guards history buffer from corruption by external calls before simulation start
+                        circular_buffer = CircularBuffer(
+                            max_len=circular_buffer.max_length,
+                            batch_size=circular_buffer.batch_size,
+                            device=circular_buffer.device,
+                        )
+                        circular_buffer.append(obs)
+
+                    #flatten after group concatenation
+                    group_obs[term_name] = circular_buffer.buffer
+                else:
+                    group_obs[term_name] = obs
+
+            # concatenate all observations in the group together
+            if self._group_obs_concatenate[group_name]:
+                # set the concatenate dimension, account for the batch dimension if positive dimension is given
+                return torch.cat(list(group_obs.values()), dim=self._group_obs_concatenate_dim[group_name]).reshape(self._env.num_envs,-1)
+            else:
+                return group_obs
+        else:
+            for term_name, term_cfg in obs_terms:
+                # compute term's value
+                obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
+                # apply post-processing
+                if term_cfg.modifiers is not None:
+                    for modifier in term_cfg.modifiers:
+                        obs = modifier.func(obs, **modifier.params)
+                if isinstance(term_cfg.noise, noise.NoiseCfg):
+                    obs = term_cfg.noise.func(obs, term_cfg.noise)
+                elif isinstance(term_cfg.noise, noise.NoiseModelCfg) and term_cfg.noise.func is not None:
+                    obs = term_cfg.noise.func(obs)
+                if term_cfg.clip:
+                    obs = obs.clip_(min=term_cfg.clip[0], max=term_cfg.clip[1])
+                if term_cfg.scale is not None:
+                    obs = obs.mul_(term_cfg.scale)
+                # Update the history buffer if observation term has history enabled
+                if term_cfg.history_length > 0:
+                    circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]
+                    if update_history:
+                        circular_buffer.append(obs)
+                    elif circular_buffer._buffer is None:
+                        # because circular buffer only exits after the simulation steps,
+                        # this guards history buffer from corruption by external calls before simulation start
+                        circular_buffer = CircularBuffer(
+                            max_len=circular_buffer.max_length,
+                            batch_size=circular_buffer.batch_size,
+                            device=circular_buffer.device,
+                        )
+                        circular_buffer.append(obs)
+
+                    if term_cfg.flatten_history_dim:
+                        group_obs[term_name] = circular_buffer.buffer.reshape(self._env.num_envs, -1)
+                    else:
+                        group_obs[term_name] = circular_buffer.buffer
+                else:
+                    group_obs[term_name] = obs
+
+            # concatenate all observations in the group together
+            if self._group_obs_concatenate[group_name]:
+                # set the concatenate dimension, account for the batch dimension if positive dimension is given
+                return torch.cat(list(group_obs.values()), dim=self._group_obs_concatenate_dim[group_name])
+            else:
+                return group_obs
 
 class MyRLEnv(ManagerBasedRLEnv):
     joint_ids: list[int] |slice = slice(None)
     root_quat_buffer: DelayBuffer = None
     root_omega_buffer: DelayBuffer = None
-    joint_pos_rel_buffer: DelayBuffer = None
-    joint_vel_rel_buffer: DelayBuffer = None
     def __init__(self, cfg, render_mode = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         if self.cfg.joint_names is not None:
             self.joint_ids,_=self.scene["robot"].find_joints(self.cfg.joint_names,preserve_order=True)
-        if self.cfg.fbdata_delay:
+        if self.cfg.imu_delay:
             # time_lags = torch.randint(
             #     low=0,
             #     high=10,
@@ -37,24 +183,23 @@ class MyRLEnv(ManagerBasedRLEnv):
             #     dtype=torch.int,
             #     device=self.device,
             # )
-            time_lags = torch.zeros(self.num_envs,dtype=torch.int,device=self.device)
+            self.omega_time_lags = torch.zeros(self.num_envs,dtype=torch.int,device=self.device)
+            self.quat_time_extra_lags = torch.zeros(self.num_envs,dtype=torch.int,device=self.device)
             self.root_quat_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.root_quat_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
+            self.root_quat_buffer.set_time_lag(self.omega_time_lags+self.quat_time_extra_lags, torch.arange(self.num_envs, device=self.device))
             self.root_omega_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.root_omega_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
-            self.joint_pos_rel_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.joint_pos_rel_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
-            self.joint_vel_rel_buffer=DelayBuffer(10,self.num_envs,device=self.device)
-            self.joint_vel_rel_buffer.set_time_lag(time_lags, torch.arange(self.num_envs, device=self.device))
+            self.root_omega_buffer.set_time_lag(self.omega_time_lags, torch.arange(self.num_envs, device=self.device))
             for _ in range(10):
                 self.root_quat_buffer.compute(self.scene["robot"].data.root_quat_w.clone())
                 self.root_omega_buffer.compute(self.scene["robot"].data.root_ang_vel_b.clone())
-                joint_pos=self.scene["robot"].data.joint_pos[:,self.joint_ids]-self.scene["robot"].data.default_joint_pos[:,self.joint_ids]
-                self.joint_pos_rel_buffer.compute(joint_pos.clone())
-                self.joint_vel_rel_buffer.compute(self.scene["robot"].data.joint_vel[:,self.joint_ids].clone())
             
 
+    def load_managers(self):
+        super().load_managers()
+        self.observation_manager=MyObservationManager(self.cfg.observations,self)
+        print("[INFO] Overload Observation Manager: MyObservationManager")
 
+    
 
 
     def step(self, action: torch.Tensor) -> VecEnvStepReturn:
@@ -104,9 +249,13 @@ class MyRLEnv(ManagerBasedRLEnv):
             if self.root_quat_buffer is not None:
                 self.root_quat_buffer.compute(self.scene["robot"].data.root_quat_w.clone())
                 self.root_omega_buffer.compute(self.scene["robot"].data.root_ang_vel_b.clone())
-                joint_pos=self.scene["robot"].data.joint_pos[:,self.joint_ids]-self.scene["robot"].data.default_joint_pos[:,self.joint_ids]
-                self.joint_pos_rel_buffer.compute(joint_pos.clone())
-                self.joint_vel_rel_buffer.compute(self.scene["robot"].data.joint_vel[:,self.joint_ids].clone())
+
+        if self.cfg.imu_delay:
+            self.omega_time_lags.random_(0,self.cfg.omega_max_delay)
+            self.root_omega_buffer.set_time_lag(self.omega_time_lags.clip(0,10), torch.arange(self.num_envs, device=self.device))
+            self.quat_time_extra_lags.random_(0,self.cfg.quat_max_extra_delay)
+            self.root_quat_buffer.set_time_lag((self.omega_time_lags+self.quat_time_extra_lags).clip(0,10), torch.arange(self.num_envs, device=self.device))
+            
 
         # post-step:
         # -- update env counters (used for curriculum generation)
@@ -134,8 +283,6 @@ class MyRLEnv(ManagerBasedRLEnv):
             if self.root_quat_buffer is not None:
                 self.root_quat_buffer.reset(reset_env_ids)
                 self.root_omega_buffer.reset(reset_env_ids)
-                self.joint_pos_rel_buffer.reset(reset_env_ids)
-                self.joint_vel_rel_buffer.reset(reset_env_ids)
             # update articulation kinematics
             self.scene.write_data_to_sim()
             self.sim.forward()
@@ -144,9 +291,6 @@ class MyRLEnv(ManagerBasedRLEnv):
                 for _ in range(10):
                     self.root_quat_buffer.compute(self.scene["robot"].data.root_quat_w.clone())
                     self.root_omega_buffer.compute(self.scene["robot"].data.root_ang_vel_b.clone())
-                    joint_pos=self.scene["robot"].data.joint_pos[:,self.joint_ids]-self.scene["robot"].data.default_joint_pos[:,self.joint_ids]
-                    self.joint_pos_rel_buffer.compute(joint_pos.clone())
-                    self.joint_vel_rel_buffer.compute(self.scene["robot"].data.joint_vel[:,self.joint_ids].clone())
 
             # if sensors are added to the scene, make sure we render to reflect changes in reset
             if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:
