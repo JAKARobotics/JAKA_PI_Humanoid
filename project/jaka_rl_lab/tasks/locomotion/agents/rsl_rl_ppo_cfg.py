@@ -6,8 +6,8 @@
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlSymmetryCfg
 # from jaka_rl_lab.tasks.locomotion.mdp import MyRLEnv
-from jaka_rl_lab.tasks.locomotion.envs.Khan_mini_27dof import ISAAC_JAKA_PI_LOCO_DIR
-from jaka_rl_lab.tasks.locomotion.envs.Khan_mini_27dof.velocity_env_cfg import sym_augmentation_callback
+from jaka_rl_lab.tasks.locomotion.envs.Jaka_Pi_27dof import ISAAC_JAKA_PI_LOCO_DIR
+from jaka_rl_lab.tasks.locomotion.envs.Jaka_Pi_27dof.velocity_env_cfg import sym_augmentation_callback
 # import torch
 import glob
 
