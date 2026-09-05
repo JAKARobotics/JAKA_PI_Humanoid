@@ -148,7 +148,7 @@ class ActionsCfg:
     JointPositionAction = mdp.JointActionMixedCfg(
         asset_name="robot", scale=0.5, 
         joint_names=JAKA_PI_JOINT_NAMES_DEPLOY,
-        action_delay_range=(0,4))
+        action_delay_range=(0,1))
 
 @configclass
 class ObservationsCfg:

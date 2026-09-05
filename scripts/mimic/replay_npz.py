@@ -36,7 +36,7 @@ from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from jaka_rl_lab.assets.jaka import Khan_mini_CFG
+from jaka_rl_lab.assets.jaka import JAKA_PI_CFG
 from jaka_rl_lab.tasks.mimic.mdp import MotionLoader
 
 ##
@@ -59,7 +59,7 @@ class ReplayMotionsSceneCfg(InteractiveSceneCfg):
     )
 
     # articulation
-    robot: ArticulationCfg = Khan_mini_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = JAKA_PI_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):

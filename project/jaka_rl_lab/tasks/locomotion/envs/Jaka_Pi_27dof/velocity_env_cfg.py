@@ -216,7 +216,7 @@ class ActionsCfg:
     JointPositionAction = mdp.JointActionMixedCfg(
         asset_name="robot", 
         joint_names=JAKA_PI_JOINT_NAMES_DEPLOY, scale=0.5,
-        action_delay_range=(0,4))
+        action_delay_range=(0,1))
 
 
 @configclass
@@ -395,7 +395,7 @@ class TerminationsCfg:
         func=mdp.excessive_lin_vel_xy_tracking_error,
         params={
             "command_name": "base_velocity",
-            "threshold": 1.0,
+            "threshold": 0.5,
             "duration": 3.0,
         },
     )

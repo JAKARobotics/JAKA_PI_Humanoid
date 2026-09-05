@@ -61,7 +61,7 @@ from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul, 
 ##
 # Pre-defined configs
 ##
-from jaka_rl_lab.assets.jaka import Khan_mini_CFG,Khan_mini_JOINT_NAMES_DEPLOY,Khan_mini_END_LINK_NAMES
+from jaka_rl_lab.assets.jaka import JAKA_PI_CFG,JAKA_PI_JOINT_NAMES_DEPLOY,JAKA_PI_END_LINK_NAMES
 
 
 @configclass
@@ -81,7 +81,7 @@ class ReplayMotionsSceneCfg(InteractiveSceneCfg):
     )
 
     # articulation
-    robot: ArticulationCfg = Khan_mini_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = JAKA_PI_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 class MotionLoader:
@@ -258,8 +258,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
     # Extract scene entities
     robot = scene["robot"]
-    robot_joint_indexes = robot.find_joints(Khan_mini_JOINT_NAMES_DEPLOY, preserve_order=True)[0]
-    end_link_indexes = robot.find_bodies(Khan_mini_END_LINK_NAMES, preserve_order=True)[0]
+    robot_joint_indexes = robot.find_joints(JAKA_PI_JOINT_NAMES_DEPLOY, preserve_order=True)[0]
+    end_link_indexes = robot.find_bodies(JAKA_PI_END_LINK_NAMES, preserve_order=True)[0]
 
     # ------- data logger -------------------------------------------------------
     log = {

@@ -153,10 +153,13 @@ JAKA_PI_CFG = ArticulationCfg(
                 ".*_ankle_roll_joint": 20.0, #50.0,
             },
             damping={
-                ".*_ankle_pitch_joint": 1.6,
-                ".*_ankle_roll_joint": 0.4,
+                ".*_ankle_pitch_joint": 2.0,
+                ".*_ankle_roll_joint": 1.0,
             },
-            armature=0.016,
+            armature={
+                ".*_ankle_pitch_joint": 0.02,
+                ".*_ankle_roll_joint": 0.01,
+            }, #0.016,
         ),
         "arm": ImplicitActuatorCfg(
             joint_names_expr=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint"],
